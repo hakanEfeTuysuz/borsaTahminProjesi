@@ -23,11 +23,10 @@ tf.random.set_seed(42)
 random.seed(42)
 
 # ==========================================
-# 2. VERİ ÇEKME (End tarihi kapsayıcı yapıldı)
+# 2. VERİ ÇEKME
 # ==========================================
 sembol = "XU100.IS"
 print(f"--- {sembol} (BIST 100) V3 Verileri Çekiliyor ---")
-# 12 Ağustos verisini garantilemek için bitiş tarihi 13 Ağustos yapıldı
 df = yf.download(sembol, start="2020-01-01", end="2026-08-13", progress=False)
 
 kapanis = df['Close'].squeeze()
@@ -38,48 +37,40 @@ dusuk = df['Low'].squeeze()
 # ==========================================
 # 3. PROFESYONEL ÖZELLİK MÜHENDİSLİĞİ (10 Güçlü İndikatör)
 # ==========================================
-# 1. Getiri ve Momentum
 df['Return'] = kapanis.pct_change()
 df['Momentum_10'] = kapanis.diff(10)
 df['ROC_10'] = kapanis.pct_change(10) * 100
 
-# 2. Hareketli Ortalamalar
 df['MA5'] = kapanis.rolling(5).mean()
 df['MA20'] = kapanis.rolling(20).mean()
 df['MA_Fark'] = (df['MA5'] / df['MA20']) - 1
 
-# 3. RSI
 delta = kapanis.diff()
 gain = delta.clip(lower=0)
 loss = -delta.clip(upper=0)
 rs = gain.rolling(14).mean() / loss.rolling(14).mean().replace(0, np.nan)
 df['RSI14'] = 100 - (100 / (1 + rs))
 
-# 4. MACD
 ema12 = kapanis.ewm(span=12, adjust=False).mean()
 ema26 = kapanis.ewm(span=26, adjust=False).mean()
 df['MACD'] = ema12 - ema26
 df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
 
-# 5. Bollinger Bands Konumu
 bb_mid = kapanis.rolling(20).mean()
 bb_std = kapanis.rolling(20).std()
 df['BB_Upper'] = bb_mid + (2 * bb_std)
 df['BB_Lower'] = bb_mid - (2 * bb_std)
 df['BB_Position'] = (kapanis - df['BB_Lower']) / (df['BB_Upper'] - df['BB_Lower']).replace(0, np.nan)
 
-# 6. ATR (Ortalama Gerçek Aralık - Volatilite Ölçümü)
 tr1 = yuksek - dusuk
 tr2 = (yuksek - kapanis.shift(1)).abs()
 tr3 = (dusuk - kapanis.shift(1)).abs()
 tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
 df['ATR14'] = tr.rolling(14).mean()
 
-# 7. Hacim Oranı
 df['Volume_MA20'] = hacim.rolling(20).mean()
 df['Volume_Ratio'] = hacim / df['Volume_MA20'].replace(0, np.nan)
 
-# Hedef Değişkenin Hesaplanması
 future_close = kapanis.shift(-1)
 df['Target'] = np.where(future_close.notna(), (future_close > kapanis).astype(int), np.nan)
 
@@ -95,14 +86,13 @@ X_data = df[features].values
 y_data = df['Target'].values
 
 # ==========================================
-# 4. ZAMAN BAZLI TRAIN / VAL / TEST BÖLÜNME (Data Leakage Önlemi)
+# 4. ZAMAN BAZLI TRAIN / VAL / TEST BÖLÜNME
 # ==========================================
 total_len = len(X_data)
 train_end = int(total_len * 0.70)
 val_end = int(total_len * 0.85)
 
 scaler_x = MinMaxScaler()
-# Geleceği görmemesi için scaler SADECE eğitim (train) setiyle eğitilir!
 scaler_x.fit(X_data[:train_end])
 scaled_X_all = scaler_x.transform(X_data)
 
@@ -116,7 +106,6 @@ def veri_penceresi_olustur(X, y, adim=15):
 zaman_adimi = 15
 X_all_win, y_all_win = veri_penceresi_olustur(scaled_X_all, y_data, zaman_adimi)
 
-# Zaman penceresinden kaynaklı indeks kaymalarını düzeltme
 train_idx = train_end - zaman_adimi
 val_idx = val_end - zaman_adimi
 
@@ -129,7 +118,6 @@ y_val_lstm = y_all_win[train_idx:val_idx]
 X_test_lstm = X_all_win[val_idx:]
 y_test_lstm = y_all_win[val_idx:]
 
-# RF İçin Eşit Şartlar: 15 Gün x 10 Özellik = 150 boyutlu girdi
 X_train_rf = X_train_lstm.reshape(X_train_lstm.shape[0], -1)
 X_test_rf = X_test_lstm.reshape(X_test_lstm.shape[0], -1)
 
@@ -177,43 +165,59 @@ rapor_yazdir("Random Forest", y_test_lstm, rf_pred, rf_prob)
 rapor_yazdir("LSTM", y_test_lstm, lstm_pred, lstm_prob)
 
 # ==========================================
-# 7. GÖRSELLEŞTİRME (SİNYAL DEĞİŞİM GRAFİĞİ)
+# 7. GÖRSELLEŞTİRME (DÜZELTİLDİ)
 # ==========================================
-print("\n[INFO] Sinyal grafiği optimize ediliyor...")
+print("\n[INFO] Detaylı tahmin grafiği hazırlanıyor...")
 gosterilecek_gun = 100
 
-# Test verisinin uzunluğunu baz alarak grafikteki verileri hatasız hizalıyoruz
-test_uzunluk = len(rf_pred)
-gercek_fiyatlar = kapanis.iloc[-test_uzunluk:]
-tarihler = df.index[-test_uzunluk:]
+# Test verisinin gerçek başlangıç noktası val_end'dir
+gercek_fiyatlar = kapanis.iloc[val_end:]
+tarihler = df.index[val_end:]
 
 son_fiyatlar = gercek_fiyatlar[-gosterilecek_gun:]
 son_tarihler = tarihler[-gosterilecek_gun:]
 
-# Görüntülemek istediğin modelin tahminlerini buradan seçebilirsin (rf_pred veya lstm_pred)
-son_tahminler = rf_pred[-gosterilecek_gun:] 
+# Zaten yukarıda hesaplanan tahminlerin son kısımlarını çekiyoruz
+son_rf_tahminler = rf_pred[-gosterilecek_gun:]
+son_lstm_tahminler = lstm_pred[-gosterilecek_gun:]
 
-plt.figure(figsize=(14, 7))
-plt.plot(son_tarihler, son_fiyatlar, color='black', label='BIST 100 Fiyatı', linewidth=2, alpha=0.7)
+fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 10), sharex=True)
 
-# GÜRÜLTÜ FİLTRESİ: Her gün ok basmak yerine, sadece SİNYAL DEĞİŞTİĞİNDE ok koyuyoruz!
-for i in range(1, len(son_tahminler)):
-    if son_tahminler[i] != son_tahminler[i-1]:
-        if son_tahminler[i] == 1:
-            plt.scatter(son_tarihler[i], son_fiyatlar.iloc[i] - 120, color='green', marker='^', s=130, zorder=5, label='Al Sinyali' if i == 1 else "")
-        else:
-            plt.scatter(son_tarihler[i], son_fiyatlar.iloc[i] + 120, color='red', marker='v', s=130, zorder=5, label='Sat Sinyali' if i == 1 else "")
+# --- 1. ÜST GRAFİK: RANDOM FOREST ---
+ax1.plot(son_tarihler, son_fiyatlar, color='black', label='BIST 100 Fiyatı', linewidth=1.5, alpha=0.6)
+for i in range(len(son_rf_tahminler)):
+    if son_rf_tahminler[i] == 1:
+        ax1.scatter(son_tarihler[i], son_fiyatlar.iloc[i] - 80, color='green', marker='^', s=40, alpha=0.8)
+    else:
+        ax1.scatter(son_tarihler[i], son_fiyatlar.iloc[i] + 80, color='red', marker='v', s=40, alpha=0.8)
 
-plt.title('BIST 100 - Son 100 Gün: Profesyonel Trend Dönüş Sinyalleri')
-plt.xlabel('Tarih')
-plt.ylabel('Endeks Puanı (TL)')
-plt.grid(True, alpha=0.3)
+ax1.set_title('BIST 100 - Random Forest (Geleneksel ML) Günlük Tahmin Dağılımı')
+ax1.set_ylabel('Endeks Puanı (TL)')
+ax1.grid(True, alpha=0.3)
 
-siyah_cizgi = mlines.Line2D([], [], color='black', label='BIST 100 Fiyatı')
-yesil_ok = mlines.Line2D([], [], color='white', markerfacecolor='green', marker='^', markersize=10, label='Trend Dönüşü: Yükseliş (Al)')
-kirmizi_ok = mlines.Line2D([], [], color='white', markerfacecolor='red', marker='v', markersize=10, label='Trend Dönüşü: Düşüş (Sat)')
-plt.legend(handles=[siyah_cizgi, yesil_ok, kirmizi_ok], loc='upper left')
+# --- 2. ALT GRAFİK: LSTM ---
+ax2.plot(son_tarihler, son_fiyatlar, color='black', label='BIST 100 Fiyatı', linewidth=1.5, alpha=0.6)
+for i in range(len(son_lstm_tahminler)):
+    if son_lstm_tahminler[i] == 1:
+        ax2.scatter(son_tarihler[i], son_fiyatlar.iloc[i] - 80, color='blue', marker='^', s=40, alpha=0.8)
+    else:
+        ax2.scatter(son_tarihler[i], son_fiyatlar.iloc[i] + 80, color='orange', marker='v', s=40, alpha=0.8)
 
+ax2.set_title('BIST 100 - LSTM (Derin Öğrenme) Günlük Tahmin Dağılımı')
+ax2.set_xlabel('Tarih')
+ax2.set_ylabel('Endeks Puanı (TL)')
+ax2.grid(True, alpha=0.3)
+
+# Açıklama Kutuları (Legend)
+yesil_ok = mlines.Line2D([], [], color='white', markerfacecolor='green', marker='^', markersize=8, label='RF Yükseliş (Al)')
+kirmizi_ok = mlines.Line2D([], [], color='white', markerfacecolor='red', marker='v', markersize=8, label='RF Düşüş (Sat)')
+mavi_ok = mlines.Line2D([], [], color='white', markerfacecolor='blue', marker='^', markersize=8, label='LSTM Yükseliş (Al)')
+turuncu_ok = mlines.Line2D([], [], color='white', markerfacecolor='orange', marker='v', markersize=8, label='LSTM Düşüş (Sat)')
+
+ax1.legend(handles=[yesil_ok, kirmizi_ok], loc='upper left')
+ax2.legend(handles=[mavi_ok, turuncu_ok], loc='upper left')
+
+plt.tight_layout()
 plt.savefig('bist100_final_sinyal.png')
-print("✅ Tertemiz sinyal grafiği 'bist100_final_sinyal.png' olarak güncellendi.")
+print("✅ Dengeli tahmin grafiği 'bist100_final_sinyal.png' olarak güncellendi.")
 plt.show()
