@@ -4,133 +4,142 @@ import pandas as pd
 import random
 import tensorflow as tf
 from sklearn.preprocessing import MinMaxScaler
-from sklearn.metrics import mean_squared_error, mean_absolute_error
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, LSTM, Dropout
 from tensorflow.keras.callbacks import EarlyStopping
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score
+import matplotlib.pyplot as plt
+import matplotlib.lines as mlines
 import warnings
+
 warnings.filterwarnings('ignore')
 
-# 1. RASTGELELİĞİ SABİTLEME (Tekrarlanabilirlik İçin)
+# ==========================================
+# 1. RASTGELELİĞİ SABİTLEME
+# ==========================================
 np.random.seed(42)
 tf.random.set_seed(42)
 random.seed(42)
 
-sembol = "THYAO.IS"
-print(f"--- {sembol} Verileri Çekiliyor ---")
-df = yf.download(sembol, start="2020-01-01", end="2026-08-01", progress=False)
+# ==========================================
+# 2. VERİ ÇEKME VE BASİT ÖZELLİKLER (KISS Prensibi)
+# ==========================================
+sembol = "XU100.IS"
+print(f"--- {sembol} (BIST 100) Yön Tahmin Verileri Çekiliyor ---")
+df = yf.download(sembol, start="2020-01-01", end="2026-08-12", progress=False)
 
-# Hata Kontrolü
-if df.empty:
-    raise ValueError(f"HATA: {sembol} verisi çekilemedi. İnternet bağlantınızı veya sembolü kontrol edin.")
+# DataFrame sütunlarını tek boyutlu serilere çevirme (Boyut hatalarına karşı önlem)
+kapanis = df['Close'].squeeze()
+hacim = df['Volume'].squeeze()
 
-dataset = df['Close'].values.reshape(-1, 1)
+df['Return'] = kapanis.pct_change()
+df['MA5'] = kapanis.rolling(5).mean()
+df['MA20'] = kapanis.rolling(20).mean()
+df['MA_Fark'] = (df['MA5'] - df['MA20']) / df['MA20']
+df['Volatilite'] = df['Return'].rolling(10).std()
+df['Hacim_Degisim'] = hacim.pct_change()
 
-# 2. TRAIN/TEST AYRIMI (%80 Eğitim, %20 Test)
-# Modeli daha önce hiç görmediği veriyle test etmek zorundayız!
-egitim_boyutu = int(len(dataset) * 0.8)
-egitim_verisi = dataset[:egitim_boyutu]
-test_verisi = dataset[egitim_boyutu:]
+df.replace([np.inf, -np.inf], np.nan, inplace=True)
+df = df.dropna()
 
-# 3. VERİ SIZINTISINI (DATA LEAKAGE) ÖNLEME
-# Scaler SADECE eğitim verisiyle eğitilir (fit). Test verisine sadece uygulanır (transform).
-scaler = MinMaxScaler(feature_range=(0, 1))
-scaled_egitim = scaler.fit_transform(egitim_verisi)
-scaled_test = scaler.transform(test_verisi)
+# Hedef: Yarın Yükselecek mi? (1: Evet, 0: Hayır)
+df['Target'] = (kapanis.shift(-1) > kapanis).astype(int)
+df = df.dropna()
 
-# Zaman Serisi Penceresi Oluşturma Fonksiyonu
-def veri_penceresi_olustur(veri, zaman_adimi=60):
-    X, y = [], []
-    for i in range(zaman_adimi, len(veri)):
-        X.append(veri[i-zaman_adimi:i, 0])
-        y.append(veri[i, 0])
-    return np.array(X), np.array(y)
+features = ['Return', 'MA_Fark', 'Volatilite', 'Hacim_Degisim']
+X_data = df[features].values
+y_data = df['Target'].values
 
-zaman_adimi = 60
-X_train, y_train = veri_penceresi_olustur(scaled_egitim, zaman_adimi)
-X_test, y_test = veri_penceresi_olustur(scaled_test, zaman_adimi)
+# ==========================================
+# 3. EĞİTİM / TEST AYRIMI VE ÖLÇEKLENDİRME
+# ==========================================
+egitim_boyutu = int(len(X_data) * 0.8)
+X_train_raw, X_test_raw = X_data[:egitim_boyutu], X_data[egitim_boyutu:]
+y_train_raw, y_test_raw = y_data[:egitim_boyutu], y_data[egitim_boyutu:]
 
-# 3D LSTM Formatına Çevirme
-X_train = np.reshape(X_train, (X_train.shape[0], X_train.shape[1], 1))
-X_test = np.reshape(X_test, (X_test.shape[0], X_test.shape[1], 1))
+scaler_x = MinMaxScaler(feature_range=(0, 1))
+scaled_X_train = scaler_x.fit_transform(X_train_raw)
+scaled_X_test = scaler_x.transform(X_test_raw)
 
-print("\n--- LSTM Modeli Kuruluyor ---")
-model = Sequential()
-model.add(LSTM(units=50, return_sequences=True, input_shape=(X_train.shape[1], 1)))
-model.add(Dropout(0.2))
-model.add(LSTM(units=50, return_sequences=False))
-model.add(Dropout(0.2))
-model.add(Dense(units=1))
+def veri_penceresi_olustur(X, y, adim=15):
+    X_out, y_out = [], []
+    for i in range(adim, len(X)):
+        X_out.append(X[i-adim:i, :])
+        y_out.append(y[i-1])
+    return np.array(X_out), np.array(y_out)
 
-model.compile(optimizer='adam', loss='mean_squared_error')
+zaman_adimi = 15
+X_train_lstm, y_train_lstm = veri_penceresi_olustur(scaled_X_train, y_train_raw, zaman_adimi)
+X_test_lstm, y_test_lstm = veri_penceresi_olustur(scaled_X_test, y_test_raw, zaman_adimi)
 
-# 4. ERKEN DURDURMA (EARLY STOPPING)
-# Model ezberlemeye (overfitting) başlarsa 50 tur beklemez, eğitimi en iyi yerde durdurur.
+# ==========================================
+# 4. MODEL EĞİTİMLERİ (LSTM vs RANDOM FOREST)
+# ==========================================
+print("\n[INFO] Modeller Eğitiliyor...")
+lstm_model = Sequential([
+    LSTM(units=16, return_sequences=False, input_shape=(X_train_lstm.shape[1], X_train_lstm.shape[2])),
+    Dropout(0.2),
+    Dense(units=8, activation='tanh'),
+    Dense(units=1, activation='sigmoid')
+])
+
+lstm_model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
 es = EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
+lstm_model.fit(X_train_lstm, y_train_lstm, epochs=50, batch_size=16, validation_split=0.1, callbacks=[es], verbose=0)
+loss, lstm_accuracy = lstm_model.evaluate(X_test_lstm, y_test_lstm, verbose=0)
+lstm_model.save('bist100_lstm_model.keras')
 
-print("Model başarıyla derlendi. Eğitim başlıyor...\n")
-history = model.fit(X_train, y_train, epochs=50, batch_size=32, 
-                    validation_split=0.1, callbacks=[es])
-print("\nModel eğitimi tamamlandı!")
+X_train_rf = scaled_X_train[zaman_adimi:]
+y_train_rf = y_train_raw[zaman_adimi:]
+X_test_rf = scaled_X_test[zaman_adimi:]
+y_test_rf = y_test_raw[zaman_adimi:]
 
-# 5. GERÇEK SINAV: METRİKLERLE DEĞERLENDİRME
-print("\n--- Test Seti Değerlendirmesi ---")
-tahminler_scaled = model.predict(X_test, verbose=0)
-tahminler_gercek = scaler.inverse_transform(tahminler_scaled)
-y_test_gercek = scaler.inverse_transform(y_test.reshape(-1, 1))
+rf_model = RandomForestClassifier(n_estimators=100, max_depth=5, random_state=42)
+rf_model.fit(X_train_rf, y_train_rf)
+rf_tahminler = rf_model.predict(X_test_rf)
+rf_accuracy = accuracy_score(y_test_rf, rf_tahminler)
 
-rmse = np.sqrt(mean_squared_error(y_test_gercek, tahminler_gercek))
-mae = mean_absolute_error(y_test_gercek, tahminler_gercek)
+# ==========================================
+# 5. SONUÇLAR VE GÖRSELLEŞTİRME
+# ==========================================
+print("\n" + "="*50)
+print(" 🏆 BIST 100 YÖN TAHMİNİ BENCHMARK SONUÇLARI")
+print("="*50)
+print(f"🧠 LSTM Başarısı:          %{lstm_accuracy*100:.1f}")
+print(f"🌲 Random Forest Başarısı: %{rf_accuracy*100:.1f}")
+print("="*50)
 
-print(f"RMSE (Kök Ortalama Kare Hata): {rmse:.2f} TL")
-print(f"MAE (Ortalama Mutlak Hata):    {mae:.2f} TL")
+print("\n[INFO] Sinyal grafiği oluşturuluyor...")
+gosterilecek_gun = 100
+test_baslangic_indexi = egitim_boyutu + zaman_adimi
 
-# Fiyat Aralığı ve Yüzdesel Hata (Claude'un Önerisi)
-ortalama_fiyat = y_test_gercek.mean()
-print(f"Test verisi fiyat aralığı:     {y_test_gercek.min():.2f} - {y_test_gercek.max():.2f} TL")
-print(f"MAE'nin ortalama fiyata oranı: %{(mae/ortalama_fiyat)*100:.2f}")
+gercek_fiyatlar = kapanis.iloc[test_baslangic_indexi:]
+tarihler = df.index[test_baslangic_indexi:]
 
-# 6. NAIVE BASELINE KARŞILAŞTIRMASI (Gerçeklik Testi)
-# "Yarın, bugünle aynı olacak" diyen basit bir modelin hatası
-naive_tahmin = y_test_gercek[:-1]  
-naive_gercek = y_test_gercek[1:]
+son_fiyatlar = gercek_fiyatlar[-gosterilecek_gun:]
+son_tarihler = tarihler[-gosterilecek_gun:]
+son_tahminler = rf_tahminler[-gosterilecek_gun:] 
 
-naive_rmse = np.sqrt(mean_squared_error(naive_gercek, naive_tahmin))
-naive_mae = mean_absolute_error(naive_gercek, naive_tahmin)
+plt.figure(figsize=(14, 7))
+plt.plot(son_tarihler, son_fiyatlar, color='black', label='BIST 100 Fiyatı', linewidth=2, alpha=0.7)
 
-print(f"\n--- Naive Baseline (Referans Çizgisi) ---")
-print(f"Naive RMSE: {naive_rmse:.2f} TL")
-print(f"Naive MAE:  {naive_mae:.2f} TL")
+for i in range(len(son_tahminler)):
+    if son_tahminler[i] == 1:
+        plt.scatter(son_tarihler[i], son_fiyatlar.iloc[i] - 100, color='green', marker='^', s=100, zorder=5)
+    else:
+        plt.scatter(son_tarihler[i], son_fiyatlar.iloc[i] + 100, color='red', marker='v', s=100, zorder=5)
 
-if mae < naive_mae:
-    print("🏆 Başarılı: LSTM modelimiz basit referans çizgisini yendi ve gerçekten bir şeyler öğrendi!")
-else:
-    print("⚠️ Uyarı: LSTM modelimiz 'dünü kopyala' stratejisinden daha iyi bir sonuç üretemedi. Model mimarisini veya özelliklerini (features) geliştirmek gerekebilir.")
-
-# 7. YÖN DOĞRULUĞU (Directional Accuracy)
-gercek_yon = np.diff(y_test_gercek.flatten()) > 0
-tahmin_yon = np.diff(tahminler_gercek.flatten()) > 0
-yon_dogrulugu = np.mean(gercek_yon == tahmin_yon) * 100
-print(f"\n📈 Yön Tahmin Doğruluğu: %{yon_dogrulugu:.1f}")
-
-# Modeli Kaydet
-model.save('borsa_lstm_model.keras')
-print("\n✅ Model ağırlıkları 'borsa_lstm_model.keras' olarak kaydedildi.")
-
-
-# 8. VERİ GÖRSELLEŞTİRME VE KAYDETME
-import matplotlib.pyplot as plt
-
-plt.figure(figsize=(14,6))
-plt.plot(y_test_gercek, label='Gerçek Fiyat', color='blue')
-plt.plot(tahminler_gercek, label='Tahmin Edilen Fiyat', color='red', alpha=0.7)
-plt.title(f'{sembol} - Gerçek vs Tahmin (Test Seti)')
-plt.xlabel('Gün')
-plt.ylabel('Fiyat (TL)')
-plt.legend()
+plt.title('BIST 100 - Son 100 Gün: Yapay Zeka Yön Tahminleri (Random Forest)')
+plt.xlabel('Tarih')
+plt.ylabel('Endeks Puanı (TL)')
 plt.grid(True, alpha=0.3)
 
-# Grafiği kaydet (README için kullanılacak)
-plt.savefig('tahmin_grafigi.png')
-print("\n📊 Grafik 'tahmin_grafigi.png' olarak kaydedildi. Ekranda açılıyor...")
+siyah_cizgi = mlines.Line2D([], [], color='black', label='BIST 100 Fiyatı')
+yesil_ok = mlines.Line2D([], [], color='white', markerfacecolor='green', marker='^', markersize=10, label='Yükseliş Beklentisi')
+kirmizi_ok = mlines.Line2D([], [], color='white', markerfacecolor='red', marker='v', markersize=10, label='Düşüş Beklentisi')
+plt.legend(handles=[siyah_cizgi, yesil_ok, kirmizi_ok], loc='upper left')
+
+plt.savefig('bist100_final_sinyal.png')
+print("✅ İşlem Tamamlandı. Grafik 'bist100_final_sinyal.png' olarak kaydedildi.")
 plt.show()

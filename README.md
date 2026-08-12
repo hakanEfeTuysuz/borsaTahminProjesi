@@ -1,34 +1,35 @@
-# 📈 Endüstriyel Zaman Serisi Analizi: LSTM ile Borsa Tahmini (Diagnostic Project)
+# 📈 Yapay Zeka ile BIST 100 Yön Tahmin Analizi (Benchmark Projesi)
 
-Bu proje, Derin Öğrenme (LSTM) mimarisi kullanılarak finansal zaman serilerinin (Örn: THYAO.IS) analiz edilmesi, modelin eğitilmesi ve en önemlisi **performansının referans metriklerle (Naive Baseline) sorgulanması** amacıyla geliştirilmiş bir AR-GE dökümantasyonudur.
+Bu proje, makine öğrenmesi ve derin öğrenme algoritmalarının finansal zaman serilerindeki (Borsa İstanbul) davranışlarını analiz etmek, hatalı varsayımları ayıklamak ve en stabil tahminciyi bulmak amacıyla geliştirilmiş bir veri bilimi AR-GE çalışmasıdır.
 
-## 🚀 Mimarinin Temel Özellikleri
+## 🚀 Projenin Hikayesi ve Gelişim Süreci
 
-* **Güvenilir Veri Boru Hattı:** `yfinance` ile veriler çekilmiş, **Data Leakage (Veri Sızıntısı)** problemini engellemek adına Min-Max Scaler sadece eğitim setine fit edilmiştir.
-* **Model Optimizasyonu:** Çift katmanlı LSTM yapısı, %20 Dropout ve **Early Stopping (Erken Durdurma)** callback'i ile ezberlemeye (Overfitting) karşı korunmuştur.
-* **Değerlendirme Metrikleri:** Sadece RMSE/MAE ile yetinilmemiş; yön tahmin doğruluğu (Directional Accuracy) ve Naive Baseline karşılaştırması sisteme entegre edilmiştir.
+Bu projede doğrudan "mükemmel" bir model kurmak yerine, gerçek dünya verilerinin getirdiği zorluklarla yüzleşilerek iteratif bir mühendislik yaklaşımı benimsenmiştir:
 
-## 📊 Mühendislik Çıkarımları ve "Gecikme Etkisi" (Lagging Effect)
+1. **Regresyon Tuzağı (İlk Deneme):** 
+   İlk olarak LSTM modeli ile "Hisse yarın tam olarak yüzde kaç artacak?" sorusuna (Regresyon) cevap arandı. Ancak model, karesel hata (MSE) cezalarından kaçınmak için uçuk tahminler yapmayı bırakıp sürekli "0" (ortalama) değerine yaklaşarak korkak bir tutum sergiledi.
+2. **Veri Açlığı ve Toprak Uyuşmazlığı:** 
+   Algoritma yeni halka arz olmuş, dar bir veri setine sahip hisselerde denendiğinde, derin öğrenme (LSTM) modellerinin verisizlikten dolayı "Dying ReLU" ve ezberleme krizlerine girdiği gözlemlendi.
+3. **Sınıflandırmaya (Classification) Geçiş:** 
+   Fiyat tahmini yerine, problem ikili sınıflandırmaya (Yükselecek: 1 / Düşecek: 0) dönüştürüldü.
+4. **Endeks Verisi ve Algoritma Çarpışması:** 
+   Bireysel hisselerin manipülatif gürültüsünden kurtulmak için BIST 100 (`XU100.IS`) endeksi baz alındı. Derin öğrenme (LSTM) ile Geleneksel Makine Öğrenmesi (Random Forest) aynı veri seti üzerinde dövüştürüldü.
 
-Model eğitimini başarıyla tamamlayıp test verisinde 10.76 TL gibi makul bir Ortalama Mutlak Hata (MAE) yakalamış olsa da, sistemin davranışsal analizi (Bkz: `tahmin_grafigi.png`) çok kritik bir gerçeği ortaya koymuştur:
+## 🏆 Benchmark Sonuçları
 
-Model, borsanın kaotik yapısı içinde büyük hatalar yapmamak (Loss değerini düşük tutmak) adına **"Gecikme Etkisine" (Lagging Effect)** sığınmış ve çoğunlukla bir önceki günün kapanış fiyatını kopyalamayı öğrenmiştir. Bu durum, Naive Baseline (Yarın = Bugün) testiyle matematiksel olarak da kanıtlanmıştır.
+KISS (Keep It Simple, Stupid) prensibi doğrultusunda sadece temel fiyat hareketleri, volatilite ve hareketli ortalama farkları indikatör olarak kullanılmıştır:
 
-**Gelecek Geliştirmeler (Future Work):** Bu tanı projesi göstermektedir ki; finansal piyasalarda sadece geçmiş kapanış fiyatlarını (Close) modele vermek yeterli değildir. Gelecek mimarilerde modele Hacim (Volume), RSI ve MACD gibi teknik indikatörler ekstra özellik (feature) olarak beslenecektir.
+*   **LSTM Doğruluğu:** ~%51.4 (Karmaşık veri setinde negatif sinyalleri filtreleme zorlukları yaşadı.)
+*   **Random Forest Doğruluğu:** ~%53.7 (Kaotik piyasa verisinde Karar Ağaçlarının çok daha stabil çalıştığı kanıtlandı.)
 
-## 💻 Kurulum ve Çalıştırma
+*(Not: Algo-trading dünyasında komisyonlar düşüldükten sonra %51 ve üzeri istikrarlı başarı oranları, işlem stratejileri için temel eşik olarak kabul edilir.)*
 
-Proje, kütüphane çakışmalarını önlemek adına tamamen izole bir sanal ortamda geliştirilmiştir.
+## 📊 Örnek Görselleştirme
+Proje, kazanan Random Forest algoritmasının tahminlerini BIST 100 grafiği üzerine Al/Sat sinyalleri (yeşil/kırmızı oklar) olarak yerleştiren bir görselleştirme modülüne sahiptir. Modelin piyasa trendlerini yakalama kabiliyetini repodaki `bist100_final_sinyal.png` üzerinden inceleyebilirsiniz.
 
-```bash
-# 1. Sanal ortamı oluşturun ve aktif edin
-python3 -m venv venv
-source venv/bin/activate
-
-# 2. Gerekli kütüphaneleri kurun
-pip install tensorflow yfinance scikit-learn pandas numpy matplotlib
-
-# 3. Veri çekme ve eğitim pipeline'ını başlatın
-python3 data_fetch.py
-
-Uyarı: Bu proje tamamen yazılım ve yapay zeka mimarilerini test etmek amacıyla geliştirilmiştir, finansal yatırım tavsiyesi içermez.
+## 🛠️ Kullanılan Teknolojiler
+*   **Python**
+*   **TensorFlow & Keras** (Derin Öğrenme / LSTM)
+*   **Scikit-Learn** (Random Forest, Veri Ölçeklendirme)
+*   **yfinance** (Veri Tedariği)
+*   **Matplotlib & Pandas** (Veri Manipülasyonu ve Görselleştirme)
