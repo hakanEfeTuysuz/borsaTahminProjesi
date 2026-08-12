@@ -13,23 +13,26 @@ Bu projede doğrudan "mükemmel" bir model kurmak yerine, gerçek dünya veriler
 3. **Sınıflandırmaya (Classification) Geçiş:** 
    Fiyat tahmini yerine, problem ikili sınıflandırmaya (Yükselecek: 1 / Düşecek: 0) dönüştürüldü.
 4. **Endeks Verisi ve Algoritma Çarpışması:** 
-   Bireysel hisselerin manipülatif gürültüsünden kurtulmak için BIST 100 (`XU100.IS`) endeksi baz alındı. Derin öğrenme (LSTM) ile Geleneksel Makine Öğrenmesi (Random Forest) aynı veri seti üzerinde dövüştürüldü.
+   Bireysel hisselerin manipülatif gürültüsünden kurtulmak için BIST 100 (`XU100.IS`) endeksi baz alındı. 
+5. **Zaman Serisi Doğrulaması ve İleri Özellik Mühendisliği (V2):** 
+   Başlangıçtaki veri sızıntısı (data leakage) riskleri; eğitim, doğrulama ve test setlerinin kronolojik olarak (%70, %15, %15) kesin çizgilerle ayrılmasıyla tamamen giderildi. Modelin piyasa bağlamını anlayabilmesi için RSI, MACD, ATR, Momentum ve Bollinger Bantları gibi 10 kritik indikatör sisteme dahil edildi. LSTM ve Random Forest algoritmalarına eşit zaman pencereleri (15 gün x 10 özellik = 150 boyut) sunularak adil bir benchmarking ortamı kuruldu.
 
-## 🏆 Benchmark Sonuçları
+## 🏆 V2 Benchmark Sonuçları
 
-KISS (Keep It Simple, Stupid) prensibi doğrultusunda sadece temel fiyat hareketleri, volatilite ve hareketli ortalama farkları indikatör olarak kullanılmıştır:
+Geliştirilen nihai V2 mimarisiyle, modellerin sadece "sürekli yükselecek" deme eğilimi (Baseline) engellenmiş ve piyasanın karmaşık gürültüsü içinde gerçek bir matematiksel sinyal (edge) aranmıştır:
 
-*   **LSTM Doğruluğu:** ~%51.4 (Karmaşık veri setinde negatif sinyalleri filtreleme zorlukları yaşadı.)
-*   **Random Forest Doğruluğu:** ~%53.7 (Kaotik piyasa verisinde Karar Ağaçlarının çok daha stabil çalıştığı kanıtlandı.)
+*   **Baseline (Çoğunluk Sınıfı Tahmini):** %51.6 Doğruluk
+*   **Random Forest:** Accuracy: %51.8 | AUC: 0.541 | Precision: 0.528
+*   **LSTM (Şampiyon):** Accuracy: %56.3 | AUC: 0.568 | Precision: 0.585
 
-*(Not: Algo-trading dünyasında komisyonlar düşüldükten sonra %51 ve üzeri istikrarlı başarı oranları, işlem stratejileri için temel eşik olarak kabul edilir.)*
+*(Not: Algo-trading dünyasında komisyonlar düşüldükten sonra %51 ve üzeri istikrarlı başarı oranları, işlem stratejileri için temel eşik olarak kabul edilir. LSTM'nin %58.5'lik Precision skoru, modelin BIST 100 gürültüsünü filtrelemeyi başardığını ve "Yükselecek" dediği anlarda sağladığı yüksek güvenilirliği kanıtlamaktadır.)*
 
 ## 📊 Örnek Görselleştirme
-Proje, kazanan Random Forest algoritmasının tahminlerini BIST 100 grafiği üzerine Al/Sat sinyalleri (yeşil/kırmızı oklar) olarak yerleştiren bir görselleştirme modülüne sahiptir. Modelin piyasa trendlerini yakalama kabiliyetini repodaki `bist100_final_sinyal.png` üzerinden inceleyebilirsiniz.
+Proje, modelin tahminlerini BIST 100 grafiği üzerine Al/Sat sinyalleri (yeşil/kırmızı oklar) olarak yerleştiren bir görselleştirme modülüne sahiptir. Algoritmaların piyasa trendlerini yakalama kabiliyetini repodaki grafikler üzerinden inceleyebilirsiniz.
 
 ## 🛠️ Kullanılan Teknolojiler
 *   **Python**
 *   **TensorFlow & Keras** (Derin Öğrenme / LSTM)
-*   **Scikit-Learn** (Random Forest, Veri Ölçeklendirme)
+*   **Scikit-Learn** (Random Forest, Veri Ölçeklendirme, Gelişmiş Metrikler)
 *   **yfinance** (Veri Tedariği)
 *   **Matplotlib & Pandas** (Veri Manipülasyonu ve Görselleştirme)
